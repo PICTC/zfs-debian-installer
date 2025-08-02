@@ -193,29 +193,92 @@ function select_disks {
 
   while true; do
     local menu_entries_option=()
-
     if [[ ${#v_suitable_disks[@]} -eq 1 ]]; then
       local disk_selection_status=ON
     else
       local disk_selection_status=OFF
     fi
-
     for disk_id in "${v_suitable_disks[@]}"; do
       menu_entries_option+=("$disk_id" "($block_device_basename)" "$disk_selection_status")
     done
-
-    local dialog_message="Select the ZFS devices (multiple selections will be in mirror).
-
-Devices with mounted partitions, cdroms, and removable devices are not displayed!
-"
+    local dialog_message="Select the ZFS devices (multiple selections will be used for RAID types).
+\nDevices with mounted partitions, cdroms, and removable devices are not displayed!"
     mapfile -t v_selected_disks < <(dialog --separate-output --checklist "$dialog_message" 30 100 $((${#menu_entries_option[@]} / 3)) "${menu_entries_option[@]}" 3>&1 1>&2 2>&3)
-
     if [[ ${#v_selected_disks[@]} -gt 0 ]]; then
       break
     fi
   done
-
   print_variables v_selected_disks
+
+  # Pool type selection dialog
+  local pool_types=(
+    "stripe" "RAID0 (stripe, no redundancy)" ON
+    "mirror" "RAID1 (mirror, 2 disks min)" OFF
+    "raid10" "RAID10 (mirror of stripes, 4 disks min)" OFF
+    "raidz" "RAIDZ-1 (single parity, 3 disks min)" OFF
+    "raidz2" "RAIDZ-2 (double parity, 4 disks min)" OFF
+    "raidz3" "RAIDZ-3 (triple parity, 5 disks min)" OFF
+  )
+  v_pool_type=$(dialog --radiolist "Select ZFS pool type:" 20 70 6 "${pool_types[@]}" 3>&1 1>&2 2>&3)
+  echo "Selected pool type: $v_pool_type"
+
+  # Validate disk count for selected pool type
+  local disk_count=${#v_selected_disks[@]}
+  local valid=1
+  case "$v_pool_type" in
+    stripe)
+      if (( disk_count < 1 )); then valid=0; fi
+      ;;
+    mirror)
+      if (( disk_count < 2 )); then valid=0; fi
+      ;;
+    raid10)
+      if (( disk_count < 4 )) || (( disk_count % 2 != 0 )); then valid=0; fi
+      ;;
+    raidz)
+      if (( disk_count < 3 )); then valid=0; fi
+      ;;
+    raidz2)
+      if (( disk_count < 4 )); then valid=0; fi
+      ;;
+    raidz3)
+      if (( disk_count < 5 )); then valid=0; fi
+      ;;
+    *)
+      valid=0
+      ;;
+  esac
+  if (( ! valid )); then
+    dialog --msgbox "Invalid disk count for selected pool type ($v_pool_type). Please select the correct number of disks." 10 60
+    select_disks
+    return
+  fi
+
+  # Format zpool create arguments
+  case "$v_pool_type" in
+    stripe)
+      v_zpool_create_args=("${v_selected_disks[@]}")
+      ;;
+    mirror)
+      v_zpool_create_args=("mirror" "${v_selected_disks[@]}")
+      ;;
+    raid10)
+      v_zpool_create_args=()
+      for ((i=0; i<disk_count; i+=2)); do
+        v_zpool_create_args+=("mirror" "${v_selected_disks[i]}" "${v_selected_disks[i+1]}")
+      done
+      ;;
+    raidz)
+      v_zpool_create_args=("raidz" "${v_selected_disks[@]}")
+      ;;
+    raidz2)
+      v_zpool_create_args=("raidz2" "${v_selected_disks[@]}")
+      ;;
+    raidz3)
+      v_zpool_create_args=("raidz3" "${v_selected_disks[@]}")
+      ;;
+  esac
+  print_variables v_zpool_create_args
 }
 
 function ask_swap_size {
@@ -510,18 +573,14 @@ echo "======= create zfs pools and datasets =========="
     bpool_disks_partitions+=("${selected_disk}-part2")
   done
 
-  if [[ ${#v_selected_disks[@]} -gt 1 ]]; then
-    pools_mirror_option=mirror
-  else
-    pools_mirror_option=
-  fi
 
+# Use v_zpool_create_args for pool type selection
 # shellcheck disable=SC2086
 zpool create \
   $v_bpool_tweaks -O canmount=off -O devices=off \
   -o cachefile=/etc/zpool.cache \
   -O mountpoint=/boot -R $c_zfs_mount_dir -f \
-  $v_bpool_name $pools_mirror_option "${bpool_disks_partitions[@]}"
+  $v_bpool_name "${v_zpool_create_args[@]/%/-part2}"
 
 # shellcheck disable=SC2086
 echo -n "$v_passphrase" | zpool create \
@@ -529,7 +588,7 @@ echo -n "$v_passphrase" | zpool create \
   -o cachefile=/etc/zpool.cache \
   "${encryption_options[@]}" \
   -O mountpoint=/ -R $c_zfs_mount_dir -f \
-  $v_rpool_name $pools_mirror_option "${rpool_disks_partitions[@]}"
+  $v_rpool_name "${v_zpool_create_args[@]/%/-part3}"
 
 zfs create -o canmount=off -o mountpoint=none "$v_rpool_name/ROOT"
 zfs create -o canmount=off -o mountpoint=none "$v_bpool_name/BOOT"
