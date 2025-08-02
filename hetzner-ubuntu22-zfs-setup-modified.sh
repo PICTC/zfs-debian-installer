@@ -120,16 +120,20 @@ function store_os_distro_information {
   lsb_release --all > "$c_lsb_release_log"
 }
 
+function error_exit {
+  log_error "$1"
+  dialog --msgbox "ERROR: $1" 10 70
+  exit 1
+}
+
 function check_prerequisites {
   # shellcheck disable=SC2119
   print_step_info_header
   if [[ $(id -u) -ne 0 ]]; then
-    echo 'This script must be run with administrative privileges!'
-    exit 1
+    error_exit 'This script must be run with administrative privileges!'
   fi
   if [[ ! -r /root/.ssh/authorized_keys ]]; then
-    echo "SSH pubkey file is absent, please add it to the rescue system setting, then reboot into rescue system and run the script"
-    exit 1
+    error_exit "SSH pubkey file is absent, please add it to the rescue system setting, then reboot into rescue system and run the script"
   fi
   if ! dpkg-query --showformat="\${Status}" -W dialog 2> /dev/null | grep -q "install ok installed"; then
     apt install --yes dialog
