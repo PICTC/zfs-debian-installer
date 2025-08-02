@@ -201,9 +201,22 @@ function select_disks {
     for disk_id in "${v_suitable_disks[@]}"; do
       menu_entries_option+=("$disk_id" "($block_device_basename)" "$disk_selection_status")
     done
-    local dialog_message="Select the ZFS devices (multiple selections will be used for RAID types).
-\nDevices with mounted partitions, cdroms, and removable devices are not displayed!"
+    local dialog_message="Select the ZFS devices (multiple selections will be used for RAID types).\nDevices with mounted partitions, cdroms, and removable devices are not displayed!"
     mapfile -t v_selected_disks < <(dialog --separate-output --checklist "$dialog_message" 30 100 $((${#menu_entries_option[@]} / 3)) "${menu_entries_option[@]}" 3>&1 1>&2 2>&3)
+    # Check for duplicate disks
+    local unique_disks=()
+    local duplicate_found=0
+    for disk in "${v_selected_disks[@]}"; do
+      if [[ " ${unique_disks[*]} " == *" $disk "* ]]; then
+        duplicate_found=1
+        break
+      fi
+      unique_disks+=("$disk")
+    done
+    if (( duplicate_found )); then
+      dialog --msgbox "Duplicate disks selected! Please select unique disks only." 10 60
+      continue
+    fi
     if [[ ${#v_selected_disks[@]} -gt 0 ]]; then
       break
     fi
@@ -333,15 +346,15 @@ function ask_pool_names {
 
   local bpool_name_invalid_message=
 
-  while [[ ! $v_bpool_name =~ ^[a-z][a-zA-Z_:.-]+$ ]]; do
-    v_bpool_name=$(dialog --inputbox "${bpool_name_invalid_message}Insert the name for the boot pool" 30 100 bpool 3>&1 1>&2 2>&3)
+  while [[ ! $v_bpool_name =~ ^[a-zA-Z0-9][a-zA-Z0-9_:.-]{2,}$ ]]; do
+    v_bpool_name=$(dialog --inputbox "${bpool_name_invalid_message}Insert the name for the boot pool (min 3 chars, alphanumeric, _, :, ., -)" 30 100 bpool 3>&1 1>&2 2>&3)
 
     bpool_name_invalid_message="Invalid pool name! "
   done
   local rpool_name_invalid_message=
 
-  while [[ ! $v_rpool_name =~ ^[a-z][a-zA-Z_:.-]+$ ]]; do
-    v_rpool_name=$(dialog --inputbox "${rpool_name_invalid_message}Insert the name for the root pool" 30 100 rpool 3>&1 1>&2 2>&3)
+  while [[ ! $v_rpool_name =~ ^[a-zA-Z0-9][a-zA-Z0-9_:.-]{2,}$ ]]; do
+    v_rpool_name=$(dialog --inputbox "${rpool_name_invalid_message}Insert the name for the root pool (min 3 chars, alphanumeric, _, :, ., -)" 30 100 rpool 3>&1 1>&2 2>&3)
 
     rpool_name_invalid_message="Invalid pool name! "
   done
