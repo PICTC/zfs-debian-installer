@@ -260,7 +260,7 @@ function select_disks {
       v_zpool_create_args=("${v_selected_disks[@]}")
       ;;
     mirror)
-      v_zpool_create_args=("mirror" "${v_selected_disks[@]}")
+      v_zpool_create_args=("${v_selected_disks[@]}")
       ;;
     raid10)
       v_zpool_create_args=()
@@ -482,6 +482,31 @@ function unmount_and_export_fs {
   fi
 }
 
+# UEFI/BIOS boot mode detection
+v_boot_mode="bios" # Will be set to 'uefi' if detected
+function detect_boot_mode {
+  if [ -d /sys/firmware/efi ]; then
+    v_boot_mode="uefi"
+  else
+    v_boot_mode="bios"
+  fi
+  echo "Detected boot mode: $v_boot_mode"
+}
+
+# Error handling and logging improvements
+function log_error {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | tee -a "$c_install_log" >&2
+}
+
+function safe_run {
+  "$@"
+  local status=$?
+  if [ $status -ne 0 ]; then
+    log_error "Command failed: $*"
+    exit $status
+  fi
+}
+
 #################### MAIN ################################
 export LC_ALL=en_US.UTF-8
 export NCURSES_NO_UTF8_ACS=1
@@ -542,21 +567,28 @@ echo "======= installing zfs on rescue system =========="
   zfs --version
 
 echo "======= partitioning the disk =========="
+if [[ $v_free_tail_space -eq 0 ]]; then
+  tail_space_parameter=0
+else
+  tail_space_parameter="-${v_free_tail_space}G"
+fi
 
-  if [[ $v_free_tail_space -eq 0 ]]; then
-    tail_space_parameter=0
-  else
-    tail_space_parameter="-${v_free_tail_space}G"
-  fi
-
-  for selected_disk in "${v_selected_disks[@]}"; do
-    wipefs --all --force "$selected_disk"
-    sgdisk -a1 -n1:24K:+1000K            -t1:EF02 "$selected_disk"
-    sgdisk -n2:0:+2G                   -t2:BF01 "$selected_disk" # Boot pool
+for selected_disk in "${v_selected_disks[@]}"; do
+  wipefs --all --force "$selected_disk"
+  if [[ "$v_boot_mode" == "uefi" ]]; then
+    # UEFI: EFI System Partition, Boot pool, Root pool
+    sgdisk -a1 -n1:1M:+512M -t1:EF00 "$selected_disk" # EFI System Partition
+    sgdisk -n2:0:+2G -t2:BF01 "$selected_disk" # Boot pool
     sgdisk -n3:0:"$tail_space_parameter" -t3:BF01 "$selected_disk" # Root pool
-  done
+  else
+    # BIOS: BIOS Boot Partition, Boot pool, Root pool
+    sgdisk -a1 -n1:24K:+1000K -t1:EF02 "$selected_disk" # BIOS Boot Partition
+    sgdisk -n2:0:+2G -t2:BF01 "$selected_disk" # Boot pool
+    sgdisk -n3:0:"$tail_space_parameter" -t3:BF01 "$selected_disk" # Root pool
+  fi
+done
 
-  udevadm settle
+udevadm settle
 
 echo "======= create zfs pools and datasets =========="
 
@@ -795,16 +827,28 @@ echo "========setting up zfs module parameters========"
 chroot_execute "echo options zfs zfs_arc_max=$((v_zfs_arc_max_mb * 1024 * 1024)) >> /etc/modprobe.d/zfs.conf"
 
 echo "======= setting up grub =========="
-chroot_execute "echo 'grub-pc grub-pc/install_devices_empty   boolean true' | debconf-set-selections"
-chroot_execute "apt install --yes grub-pc"
-for disk in ${v_selected_disks[@]}; do
-  chroot_execute "grub-install $disk"
-done
-
+if [[ "$v_boot_mode" == "uefi" ]]; then
+  chroot_execute "apt install --yes grub-efi-amd64"
+  # Mount EFI partition
+  for selected_disk in ${v_selected_disks[@]}; do
+    mkdir -p $c_zfs_mount_dir/boot/efi
+    mount ${selected_disk}-part1 $c_zfs_mount_dir/boot/efi
+    break # Only need one EFI partition mounted for grub-install
+  done
+  chroot_execute "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu"
+else
+  chroot_execute "echo 'grub-pc grub-pc/install_devices_empty   boolean true' | debconf-set-selections"
+  chroot_execute "apt install --yes grub-pc"
+  for disk in ${v_selected_disks[@]}; do
+    chroot_execute "grub-install $disk"
+  done
+  for ((i = 1; i < ${#v_selected_disks[@]}; i++)); do
+    dd if="${v_selected_disks[0]}-part1" of="${v_selected_disks[i]}-part1"
+  done
+fi
 chroot_execute "sed -i 's/#GRUB_TERMINAL=console/GRUB_TERMINAL=console/g' /etc/default/grub"
 chroot_execute "sed -i 's|GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"net.ifnames=0\"|' /etc/default/grub"
 chroot_execute "sed -i 's|GRUB_CMDLINE_LINUX=\"\"|GRUB_CMDLINE_LINUX=\"root=ZFS=$v_rpool_name/ROOT/ubuntu\"|g' /etc/default/grub"
-
 chroot_execute "sed -i 's/quiet//g' /etc/default/grub"
 chroot_execute "sed -i 's/splash//g' /etc/default/grub"
 chroot_execute "echo 'GRUB_DISABLE_OS_PROBER=true'   >> /etc/default/grub"
