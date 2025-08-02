@@ -1,17 +1,54 @@
+
 #!/bin/bash
 
-: <<'end_header_info'
-(c) Andrey Prokopenko job@terem.fr
-fully automatic script to install Ubuntu 22 LTS with ZFS root on Hetzner VPS
-WARNING: all data on the disk will be destroyed
-How to use: add SSH key to the rescue console, set it OS to linux64, then press "mount rescue and power cycle" button
-Next, connect via SSH to console, and run the script
-Answer script questions about desired hostname and ZFS ARC cache size
-To cope with network failures its higly recommended to run the script inside screen console
-screen -dmS zfs
-screen -r zfs
-To detach from screen console, hit Ctrl-d then a
-end_header_info
+# ============================================================================
+# Hetzner Ubuntu 22 LTS ZFS Root Installer Script
+# -----------------------------------------------------------------------------
+# Author: (c) Andrey Prokopenko job@terem.fr
+# Maintainer: PICTC
+#
+# Description:
+#   Fully automatic script to install Ubuntu 22.04 LTS with ZFS root on Hetzner VPS.
+#   Supports flexible ZFS pool type selection (RAID0, RAID1, RAID10, RAIDZ-1, RAIDZ-2, RAIDZ-3),
+#   UEFI/BIOS boot modes, disk validation, encryption, and robust error handling.
+#
+# Features:
+#   - Dialog-based UI for disk and pool type selection
+#   - Dynamic zpool argument formatting for all major layouts
+#   - UEFI/BIOS detection and partitioning logic
+#   - GRUB installation for both boot modes
+#   - Input validation (disk selection, pool names, swap size, etc.)
+#   - Disk type warning (SATA/NVMe/SCSI mix)
+#   - Modularized validation and error handling functions
+#   - Optional root pool encryption (with dropbear unlock)
+#   - Network and locale setup, OpenSSH configuration
+#   - Automated ZFS dataset creation and system configuration
+#
+# Usage:
+#   1. Add your SSH key to the Hetzner rescue console.
+#   2. Set rescue OS to linux64, then "mount rescue and power cycle".
+#   3. Connect via SSH to the rescue system.
+#   4. Run this script: bash hetzner-ubuntu22-zfs-setup-modified.sh
+#   5. Follow dialog prompts for disk selection, pool type, hostname, ARC size, etc.
+#   6. The script will partition disks, create ZFS pools, install Ubuntu, and configure the system.
+#
+#   WARNING: All data on selected disks will be destroyed!
+#
+#   For network reliability, it is recommended to run inside a screen session:
+#     screen -dmS zfs
+#     screen -r zfs
+#     (Detach: Ctrl+a then d)
+#
+# Options:
+#   - Pool type: stripe, mirror, raid10, raidz, raidz2, raidz3
+#   - Encryption: Optional for root pool
+#   - Swap size: Configurable
+#   - ARC cache size: Configurable
+#   - Hostname: Configurable
+#
+# Support:
+#   Issues: https://github.com/terem42/zfs-hetzner-vm/issues
+# ============================================================================
 
 set -o errexit
 set -o pipefail
