@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Test hetzner-ubuntu22-zfs-setup-pooltype.sh",
+			"command": "bash hetzner-ubuntu22-zfs-setup-pooltype.sh",
+			"group": "test",
+			"isBackground": false
+		}
+	]
+}
