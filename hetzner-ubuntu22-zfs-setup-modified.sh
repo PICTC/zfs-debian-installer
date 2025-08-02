@@ -238,6 +238,18 @@ function select_disks {
   # Validate disk count for selected pool type
   local disk_count=${#v_selected_disks[@]}
   local valid=1
+  # Enhanced: Warn if mixing disk types (e.g., SATA + NVMe)
+  local disk_types=()
+  for disk in "${v_selected_disks[@]}"; do
+    disk_type=$(basename "$disk" | awk -F'-' '{print $1}')
+    disk_types+=("$disk_type")
+  done
+  if (( disk_count > 1 )); then
+    unique_type=$(printf "%s\n" "${disk_types[@]}" | sort -u | wc -l)
+    if (( unique_type > 1 )); then
+      dialog --msgbox "Warning: You have selected disks of different types (e.g., SATA, NVMe, SCSI). Mixing disk types in a pool may impact performance and reliability." 10 70
+    fi
+  fi
   case "$v_pool_type" in
     stripe)
       if (( disk_count < 1 )); then valid=0; fi
